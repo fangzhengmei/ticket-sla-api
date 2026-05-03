@@ -1,5 +1,6 @@
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 from contextlib import asynccontextmanager
@@ -17,7 +18,8 @@ from .services import (
     init_sla_configs, create_ticket, get_ticket, get_tickets,
     update_ticket, delete_ticket, get_sla_config, get_all_sla_configs,
     update_sla_config, get_overdue_tickets, get_overdue_count,
-    is_ticket_overdue, is_ticket_response_overdue, get_overdue_hours
+    is_ticket_overdue, is_ticket_response_overdue, get_overdue_hours,
+    StatusTransitionError
 )
 
 @asynccontextmanager
@@ -42,6 +44,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.exception_handler(StatusTransitionError)
+async def status_transition_error_handler(request: Request, exc: StatusTransitionError) -> JSONResponse:
+    return JSONResponse(
+        status_code=400,
+        content={
+            "detail": exc.message,
+            "error_type": "status_transition_error",
+            "ticket_id": exc.ticket_id,
+            "from_status": exc.from_status.value if exc.from_status else None,
+            "to_status": exc.to_status.value
+        }
+    )
 
 def build_ticket_response(ticket) -> TicketResponse:
     current_time = datetime.utcnow()
@@ -136,7 +151,7 @@ async def update_ticket_endpoint(
 ):
     ticket = await update_ticket(db, ticket_id, update_data)
     if not ticket:
-        raise HTTPException(status_code=404, detail="工单不存在或状态流转无效")
+        raise HTTPException(status_code=404, detail="工单不存在")
     ticket = await get_ticket(db, ticket.id)
     return build_ticket_response(ticket)
 
@@ -159,7 +174,7 @@ async def update_ticket_status_endpoint(
     update_data = TicketUpdate(status=new_status)
     ticket = await update_ticket(db, ticket_id, update_data)
     if not ticket:
-        raise HTTPException(status_code=404, detail="工单不存在或状态流转无效")
+        raise HTTPException(status_code=404, detail="工单不存在")
     ticket = await get_ticket(db, ticket.id)
     return build_ticket_response(ticket)
 

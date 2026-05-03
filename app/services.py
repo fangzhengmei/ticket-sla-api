@@ -21,6 +21,29 @@ VALID_STATUS_TRANSITIONS = {
     TicketStatus.CLOSED: [TicketStatus.IN_PROGRESS],
 }
 
+
+class StatusTransitionError(Exception):
+    def __init__(
+        self,
+        ticket_id: int,
+        from_status: TicketStatus,
+        to_status: TicketStatus,
+        message: Optional[str] = None
+    ):
+        self.ticket_id = ticket_id
+        self.from_status = from_status
+        self.to_status = to_status
+        if message is None:
+            valid_transitions = VALID_STATUS_TRANSITIONS.get(from_status, [])
+            valid_list = ", ".join([s.value for s in valid_transitions]) if valid_transitions else "无"
+            message = (
+                f"工单 {ticket_id} 状态流转无效："
+                f"无法从 '{from_status.value}' 流转到 '{to_status.value}'。"
+                f"有效目标状态：{valid_list}"
+            )
+        super().__init__(message)
+        self.message = message
+
 async def init_sla_configs(db: AsyncSession) -> None:
     for priority, config in DEFAULT_SLA_CONFIGS.items():
         result = await db.execute(
@@ -193,7 +216,11 @@ async def update_ticket(db: AsyncSession, ticket_id: int, update_data: TicketUpd
     if "status" in update_dict and update_dict["status"] != old_status:
         new_status = update_dict["status"]
         if not await validate_status_transition(db, ticket.id, old_status, new_status):
-            return None
+            raise StatusTransitionError(
+                ticket_id=ticket.id,
+                from_status=old_status,
+                to_status=new_status
+            )
         
         status_log = StatusChangeLog(
             ticket_id=ticket.id,
